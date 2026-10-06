@@ -14,20 +14,42 @@
  * Payments here are signed but NOT sent on-chain (it's a demo, no real money).
  */
 import fs from "fs";
+import os from "os";
 import path from "path";
 import { createPublicClient, formatEther, formatGwei, http, verifyMessage, type Address, type Hex } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { baseSepolia } from "viem/chains";
 
-const WALLET_FILE = path.join(process.cwd(), ".agent-wallet.json");
+function getWalletFilePath() {
+  if (process.env.WALLET_FILE_PATH) return process.env.WALLET_FILE_PATH;
+  if (process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME) {
+    return path.join(os.tmpdir(), ".agent-wallet.json");
+  }
+  return path.join(process.cwd(), ".agent-wallet.json");
+}
+
 const chain = createPublicClient({ chain: baseSepolia, transport: http() });
 
 export type Payment = { from: Address; to: Address; amount: string; asset: string; resource: string; nonce: string };
 
-/** The wallet from .env or .agent-wallet.json, or null if none was created yet. */
+let memoryKey: Hex | null = null;
+
+/** The wallet from .env, memory, or .agent-wallet.json, or null if none was created yet. */
 function loadAccount() {
-  const key = process.env.WALLET_PRIVATE_KEY || (fs.existsSync(WALLET_FILE) && JSON.parse(fs.readFileSync(WALLET_FILE, "utf8")).privateKey);
-  return key ? privateKeyToAccount(key as Hex) : null;
+  const envKey = process.env.WALLET_PRIVATE_KEY;
+  if (envKey) return privateKeyToAccount(envKey as Hex);
+  if (memoryKey) return privateKeyToAccount(memoryKey);
+
+  const walletFile = getWalletFilePath();
+  if (fs.existsSync(/*turbopackIgnore: true*/ walletFile)) {
+    try {
+      const data = JSON.parse(fs.readFileSync(/*turbopackIgnore: true*/ walletFile, "utf8"));
+      if (data?.privateKey) return privateKeyToAccount(data.privateKey as Hex);
+    } catch {
+      // ignore corrupt or unreadable file
+    }
+  }
+  return null;
 }
 
 function requireAccount() {
@@ -38,9 +60,17 @@ function requireAccount() {
 
 /** Make a brand new wallet and save it. */
 export function createWallet() {
-  if (loadAccount()) return getWalletAddress();
+  const existing = loadAccount();
+  if (existing) return existing.address;
+
   const privateKey = generatePrivateKey();
-  fs.writeFileSync(WALLET_FILE, JSON.stringify({ privateKey }, null, 2));
+  memoryKey = privateKey;
+  try {
+    const walletFile = getWalletFilePath();
+    fs.writeFileSync(walletFile, JSON.stringify({ privateKey }, null, 2));
+  } catch (err) {
+    console.warn("Could not save wallet file to disk (read-only filesystem), keeping in memory:", err);
+  }
   return privateKeyToAccount(privateKey).address;
 }
 
