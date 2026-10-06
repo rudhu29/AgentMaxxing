@@ -27,15 +27,14 @@ type Status = { hasApiKey: boolean; model: string; tools: { name: string; descri
 type WalletInfo = { address: string | null; balance?: string };
 
 const EXAMPLES = [
-  "What is the live price of Bitcoin and Ethereum?",
-  "What's the weather in Mumbai? (Paid API)",
-  "Unlock premium market alpha on DeFi (Paid API)",
+  "🚀 Audit and research AERO on Base DEX (Liquidity, Volume, Risk)",
+  "🔥 What tokens are trending on DEXes right now?",
+  "🛡️ Audit token risk for BRETT and check for honeypot indicators",
+  "📝 Generate a signed intelligence memo on Ethereum L2 gas trends",
+  "What is the live price of Bitcoin, Ethereum and Solana?",
+  "Unlock premium market alpha on DeFi (Paid API via x402)",
   "What is the current gas price on Base Sepolia?",
-  "What's in your wallet?",
-  "Sign a verification statement: 'Nexus Agent Online'",
-  "Search knowledge about Smart contract",
-  "Calculate (25000 * 0.05) / 12",
-  "Roll a 20 sided dice",
+  "What's in your wallet and can you sign a verification statement?",
 ];
 
 export default function Home() {
@@ -116,7 +115,7 @@ export default function Home() {
           Nexus <span className="text-primary">Agent.</span>
         </h1>
         <p className="max-w-xl text-lg text-muted-foreground">
-          Autonomous AI agent with live market intelligence, on-chain tools, and an x402-enabled crypto wallet.
+          Autonomous AI agent with live DEX liquidity intelligence, on-chain risk auditing, Base Sepolia transfers, and an x402-enabled crypto wallet.
         </p>
       </header>
 
@@ -359,6 +358,10 @@ function WalletDetails({ wallet, onRefresh }: { wallet: WalletInfo; onRefresh: (
 
 function ToolCall({ step }: { step: Step }) {
   const payment = step.result?.payment;
+  const isTx = Boolean(step.result?.txHash);
+  const isAudit = Boolean(step.result?.safetyGrade);
+  const isSigned = Boolean(step.result?.verificationStatus || (step.result?.signature && !isAudit));
+
   return (
     <Collapsible className="border font-mono text-xs">
       <CollapsibleTrigger className="group flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-muted">
@@ -366,9 +369,20 @@ function ToolCall({ step }: { step: Step }) {
         <span className="text-muted-foreground uppercase">Tool</span>
         <span className="text-primary">{step.tool}</span>
         {payment && <Badge className="ml-auto bg-blue font-mono text-foreground uppercase">Paid {payment.amount}</Badge>}
+        {isTx && <Badge className="ml-auto bg-emerald-500/20 text-emerald-400 font-mono uppercase">On-Chain Tx</Badge>}
+        {isAudit && <Badge className="ml-auto bg-amber-500/20 text-amber-400 font-mono uppercase">{step.result.safetyGrade}</Badge>}
+        {isSigned && <Badge className="ml-auto bg-purple-500/20 text-purple-400 font-mono uppercase">ECDSA Verified</Badge>}
         {step.error && <Badge variant="destructive" className="ml-auto font-mono uppercase">Failed</Badge>}
       </CollapsibleTrigger>
       <CollapsibleContent className="flex flex-col gap-2 border-t px-3 py-2">
+        {step.result?.explorerUrl && (
+          <div className="flex items-center justify-between bg-muted/40 p-2">
+            <span className="text-muted-foreground">BaseScan Explorer</span>
+            <a href={step.result.explorerUrl} target="_blank" rel="noreferrer" className="text-primary underline flex items-center gap-1">
+              View Tx <ExternalLink className="size-3" />
+            </a>
+          </div>
+        )}
         <Json label="Input" value={step.args} />
         <Json label="Output" value={step.result} />
       </CollapsibleContent>

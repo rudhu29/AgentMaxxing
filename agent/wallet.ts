@@ -16,7 +16,18 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { createPublicClient, formatEther, formatGwei, http, verifyMessage, type Address, type Hex } from "viem";
+import {
+  createPublicClient,
+  createWalletClient,
+  formatEther,
+  formatGwei,
+  http,
+  isAddress,
+  parseEther,
+  verifyMessage,
+  type Address,
+  type Hex,
+} from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { baseSepolia } from "viem/chains";
 
@@ -108,6 +119,33 @@ export async function signStatement(message: string) {
     signer: account.address,
     message,
     signature,
+    timestamp: new Date().toISOString(),
+  };
+}
+
+/** Broadcast a real native ETH transaction on Base Sepolia */
+export async function sendEthTransaction(to: string, amountEth: string) {
+  const account = requireAccount();
+  if (!isAddress(to)) {
+    throw new Error(`'${to}' is not a valid Ethereum address. Check the address and try again.`);
+  }
+  const walletClient = createWalletClient({
+    account,
+    chain: baseSepolia,
+    transport: http(undefined, { timeout: 8000, retryCount: 1 }),
+  });
+  const hash = await walletClient.sendTransaction({
+    to: to as Address,
+    value: parseEther(amountEth),
+  });
+  return {
+    success: true,
+    from: account.address,
+    to,
+    amount: `${amountEth} ETH`,
+    txHash: hash,
+    explorerUrl: `https://sepolia.basescan.org/tx/${hash}`,
+    network: "Base Sepolia (testnet)",
     timestamp: new Date().toISOString(),
   };
 }

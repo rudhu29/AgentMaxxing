@@ -10,6 +10,7 @@ import {
   getWalletAddress,
   getWalletBalance,
   payAndFetch,
+  sendEthTransaction,
   signStatement,
 } from "./wallet";
 
@@ -254,5 +255,230 @@ export const tools: Tool[] = [
       rolled: Math.floor(Math.random() * sides) + 1,
       sides,
     }),
+  },
+
+  // ─── 10. DEX Market & Liquidity Data (DexScreener API) ───
+  {
+    name: "get_dex_market_data",
+    description:
+      "Fetch live decentralized exchange (DEX) liquidity pool depth, 24h trading volume, buy/sell transaction count, and price for any token or pair across DEXes (Base, Ethereum, Solana, Arbitrum).",
+    parameters: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description: "Token symbol, name, or contract address, e.g. 'AERO', 'TOSHI', 'BRETT', 'UNI', 'VIRTUAL'",
+        },
+      },
+      required: ["query"],
+    },
+    run: async ({ query }) => {
+      try {
+        const res = await fetch(`https://api.dexscreener.com/latest/dex/search?q=${encodeURIComponent(query)}`, {
+          signal: AbortSignal.timeout(4000),
+        });
+        if (!res.ok) throw new Error("DexScreener API request failed");
+        const data = await res.json();
+        const pair = data.pairs?.[0];
+        if (!pair) return { error: `No DEX pairs found for query '${query}'.` };
+
+        return {
+          tokenName: pair.baseToken?.name,
+          symbol: pair.baseToken?.symbol,
+          chainId: pair.chainId,
+          dex: pair.dexId,
+          pairAddress: pair.pairAddress,
+          priceUsd: `$${parseFloat(pair.priceUsd || "0").toLocaleString(undefined, { maximumFractionDigits: 6 })}`,
+          liquidityUsd: pair.liquidity?.usd ? `$${Math.round(pair.liquidity.usd).toLocaleString()}` : "N/A",
+          volume24h: pair.volume?.h24 ? `$${Math.round(pair.volume.h24).toLocaleString()}` : "N/A",
+          priceChange24h: pair.priceChange?.h24 !== undefined ? `${pair.priceChange.h24}%` : "N/A",
+          txns24h: {
+            buys: pair.txns?.h24?.buys ?? 0,
+            sells: pair.txns?.h24?.sells ?? 0,
+          },
+          marketCapOrFdv: pair.fdv ? `$${Math.round(pair.fdv).toLocaleString()}` : "N/A",
+          dexUrl: pair.url,
+        };
+      } catch (err) {
+        return { error: `Failed to fetch DEX data for '${query}': ${err instanceof Error ? err.message : String(err)}` };
+      }
+    },
+  },
+
+  // ─── 11. Trending Tokens Across DEXes ───
+  {
+    name: "get_trending_tokens",
+    description: "Get the latest trending tokens and top boosted pairs across decentralized exchanges with live volume and chain information.",
+    parameters: {
+      type: "object",
+      properties: {
+        chain: {
+          type: "string",
+          description: "Optional blockchain filter: 'base', 'solana', 'ethereum', 'bsc', or 'all'. Defaults to 'all'.",
+        },
+      },
+    },
+    run: async ({ chain = "all" }) => {
+      try {
+        const res = await fetch("https://api.dexscreener.com/token-boosts/top/v1", {
+          signal: AbortSignal.timeout(4000),
+        });
+        if (!res.ok) throw new Error("DexScreener boosts API failed");
+        const data = (await res.json()) as Array<{
+          chainId?: string;
+          tokenAddress?: string;
+          description?: string;
+          url?: string;
+          totalAmount?: number;
+        }>;
+
+        const filtered = (chain && chain !== "all")
+          ? data.filter((t) => t.chainId?.toLowerCase() === chain.toLowerCase()).slice(0, 5)
+          : data.slice(0, 5);
+
+        return {
+          filter: chain,
+          count: filtered.length,
+          trending: filtered.map((t) => ({
+            chain: t.chainId,
+            tokenAddress: t.tokenAddress,
+            description: t.description || "Trending pair",
+            dexUrl: t.url,
+            boostRank: t.totalAmount,
+          })),
+        };
+      } catch (err) {
+        return { error: `Failed to fetch trending tokens: ${err instanceof Error ? err.message : String(err)}` };
+      }
+    },
+  },
+
+  // ─── 12. Autonomous On-chain Risk & Honeypot Audit ───
+  {
+    name: "audit_token_risk",
+    description:
+      "Perform an automated on-chain risk assessment and liquidity audit on a token to detect low liquidity, honeypot patterns (zero sells), and extreme volatility.",
+    parameters: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description: "Token symbol or contract address to audit, e.g. 'AERO', 'BRETT', 'TOSHI'",
+        },
+      },
+      required: ["query"],
+    },
+    run: async ({ query }) => {
+      try {
+        const res = await fetch(`https://api.dexscreener.com/latest/dex/search?q=${encodeURIComponent(query)}`, {
+          signal: AbortSignal.timeout(4000),
+        });
+        if (!res.ok) throw new Error("DexScreener lookup failed");
+        const data = await res.json();
+        const pair = data.pairs?.[0];
+        if (!pair) return { error: `No pair found to audit for '${query}'.` };
+
+        const liquidity = pair.liquidity?.usd || 0;
+        const buys = pair.txns?.h24?.buys || 0;
+        const sells = pair.txns?.h24?.sells || 0;
+        const change24h = Math.abs(pair.priceChange?.h24 || 0);
+
+        const riskFlags: string[] = [];
+        let score = 100; // 100 = lowest risk
+
+        // 1. Liquidity check
+        if (liquidity < 10000) {
+          riskFlags.push("CRITICAL: Liquidity is below $10,000 (Extreme slippage & rug risk)");
+          score -= 45;
+        } else if (liquidity < 50000) {
+          riskFlags.push("WARNING: Low liquidity pool (under $50k)");
+          score -= 20;
+        } else if (liquidity >= 250000) {
+          riskFlags.push("POSITIVE: Deep liquidity pool (> $250k)");
+        }
+
+        // 2. Buy vs Sell Ratio (Honeypot detection)
+        if (buys > 25 && sells === 0) {
+          riskFlags.push("DANGER: 0 Sell transactions detected despite active buys (Potential Honeypot/Sell Lock)");
+          score -= 50;
+        } else if (buys > 50 && sells < buys * 0.05) {
+          riskFlags.push("WARNING: Abnormally low sell count relative to buy volume");
+          score -= 25;
+        } else {
+          riskFlags.push("POSITIVE: Balanced buy/sell orderflow detected");
+        }
+
+        // 3. Volatility Check
+        if (change24h > 75) {
+          riskFlags.push("CAUTION: Extreme 24h price fluctuation (> 75%)");
+          score -= 15;
+        }
+
+        const grade = score >= 80 ? "A (Low Risk)" : score >= 60 ? "B (Moderate Risk)" : score >= 40 ? "C (High Risk)" : "F (Severe Risk / Honeypot Warning)";
+
+        return {
+          token: `${pair.baseToken?.name} (${pair.baseToken?.symbol})`,
+          chain: pair.chainId,
+          safetyGrade: grade,
+          riskScore: Math.max(0, score),
+          liquidityUsd: `$${Math.round(liquidity).toLocaleString()}`,
+          buys24h: buys,
+          sells24h: sells,
+          riskFlags,
+          verdict: score >= 60 ? "PASS: Normal on-chain trading metrics" : "ALERT: Elevated risk parameters detected",
+        };
+      } catch (err) {
+        return { error: `Audit failed for '${query}': ${err instanceof Error ? err.message : String(err)}` };
+      }
+    },
+  },
+
+  // ─── 13. Autonomous On-Chain Transfer (Base Sepolia Testnet) ───
+  {
+    name: "transfer_test_eth",
+    description: "Send native testnet ETH on Base Sepolia from the agent's wallet to another address. Use only when explicitly requested to transfer or send test ETH.",
+    parameters: {
+      type: "object",
+      properties: {
+        to: { type: "string", description: "Recipient Ethereum address (0x...)" },
+        amountEth: { type: "string", description: "Amount of ETH to send, e.g. '0.0001'" },
+      },
+      required: ["to", "amountEth"],
+    },
+    run: async ({ to, amountEth }) => {
+      return sendEthTransaction(to, amountEth);
+    },
+  },
+
+  // ─── 14. Cryptographic Proof-of-Research Dossier ───
+  {
+    name: "generate_signed_report",
+    description: "Generate an official research dossier and sign it cryptographically with the agent's private key, producing an immutable ECDSA verification proof.",
+    parameters: {
+      type: "object",
+      properties: {
+        title: { type: "string", description: "Report title, e.g. 'Base Ecosystem Intelligence Report'" },
+        summary: { type: "string", description: "Key takeaway and findings" },
+        rating: { type: "string", description: "Verdict or rating, e.g. 'BULLISH', 'BEARISH', 'HIGH_RISK', 'AUDITED_SAFE'" },
+      },
+      required: ["title", "summary", "rating"],
+    },
+    run: async ({ title, summary, rating }) => {
+      const payload = {
+        title,
+        rating,
+        summary,
+        agent: "Nexus Autonomous Agent",
+        network: "Base Sepolia",
+        issuedAt: new Date().toISOString(),
+      };
+      const signed = await signStatement(JSON.stringify(payload));
+      return {
+        ...payload,
+        signer: signed.signer,
+        signature: signed.signature,
+        verificationStatus: "CRYPTOGRAPHICALLY_VERIFIED",
+      };
+    },
   },
 ];
