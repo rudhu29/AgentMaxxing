@@ -13,6 +13,7 @@
 
 - **Live Production App:** [https://agentmaxxing-alpha.vercel.app](https://agentmaxxing-alpha.vercel.app)
 - **GitHub Repository:** [https://github.com/rudhu29/AgentMaxxing](https://github.com/rudhu29/AgentMaxxing)
+- **Demo Walkthrough Video:** [`nexus_agent_demo.webm`](./nexus_agent_demo.webm)
 - **Base Sepolia Explorer:** [https://sepolia.basescan.org](https://sepolia.basescan.org)
 
 ---
