@@ -56,19 +56,29 @@ export async function runAgent(history: ChatMessage[], ctx: { baseUrl: string })
     contents.push(response.candidates![0].content!);
     const results: Part[] = [];
 
-    for (const call of calls) {
-      const tool = tools.find((t) => t.name === call.name);
-      let result: unknown;
-      let error = false;
-      try {
-        if (!tool) throw new Error(`No tool named ${call.name}`);
-        result = await tool.run(call.args ?? {}, ctx);
-      } catch (err) {
-        result = { error: err instanceof Error ? err.message : String(err) };
-        error = true;
-      }
-      steps.push({ tool: call.name!, args: call.args, result, error });
-      results.push({ functionResponse: { id: call.id, name: call.name, response: { result } } });
+    // Run all requested tools in parallel to minimize response time
+    const callExecutions = await Promise.all(
+      calls.map(async (call) => {
+        const tool = tools.find((t) => t.name === call.name);
+        let result: unknown;
+        let error = false;
+        try {
+          if (!tool) throw new Error(`No tool named ${call.name}`);
+          result = await tool.run(call.args ?? {}, ctx);
+        } catch (err) {
+          result = { error: err instanceof Error ? err.message : String(err) };
+          error = true;
+        }
+        return {
+          step: { tool: call.name!, args: call.args, result, error },
+          part: { functionResponse: { id: call.id, name: call.name, response: { result } } } as Part,
+        };
+      })
+    );
+
+    for (const exec of callExecutions) {
+      steps.push(exec.step);
+      results.push(exec.part);
     }
 
     contents.push({ role: "user", parts: results });

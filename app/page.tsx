@@ -44,8 +44,20 @@ export default function Home() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [thinking, setThinking] = useState(false);
+  const [thinkingSeconds, setThinkingSeconds] = useState(0);
   const [creating, setCreating] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!thinking) {
+      setThinkingSeconds(0);
+      return;
+    }
+    const interval = setInterval(() => {
+      setThinkingSeconds((s) => s + 1);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [thinking]);
 
   const loadWallet = () => fetch("/api/wallet").then((r) => r.json()).then(setWallet);
 
@@ -226,9 +238,13 @@ export default function Home() {
               )}
 
               {thinking && (
-                <p className="flex items-center gap-2 font-mono text-sm text-muted-foreground">
-                  agent is thinking <span className="inline-block h-4 w-2 animate-pulse bg-primary" />
-                </p>
+                <div className="flex items-center gap-2 font-mono text-sm text-muted-foreground">
+                  <span>agent is thinking</span>
+                  <span className="inline-block h-3.5 w-1.5 animate-pulse bg-primary" />
+                  <span className="text-xs text-muted-foreground/70">
+                    ({thinkingSeconds}s{thinkingSeconds >= 2 ? " • processing tools & generating response" : ""})
+                  </span>
+                </div>
               )}
               <div ref={bottomRef} />
             </div>

@@ -59,36 +59,87 @@ export const tools: Tool[] = [
     },
   },
 
-  // ─── 3. Real-time Crypto Price Tool (Free Public API) ───
+  // ─── 3. Real-time Crypto Price Tool (Fast Multi-Source API) ───
   {
     name: "get_crypto_price",
-    description: "Fetch live cryptocurrency price in USD and 24-hour percentage change using CoinGecko.",
+    description: "Fetch live cryptocurrency price in USD and 24-hour percentage change.",
     parameters: {
       type: "object",
       properties: {
         coinId: {
           type: "string",
-          description: "CoinGecko coin ID, e.g. 'bitcoin', 'ethereum', 'solana', 'dogecoin', 'cardano'",
+          description: "Coin name or symbol, e.g. 'bitcoin', 'ethereum', 'solana', 'dogecoin', 'btc', 'eth'",
         },
       },
       required: ["coinId"],
     },
     run: async ({ coinId }) => {
       const id = String(coinId).toLowerCase().trim();
-      const res = await fetch(
-        `https://api.coingecko.com/api/v3/simple/price?ids=${encodeURIComponent(id)}&vs_currencies=usd&include_24hr_change=true`
-      );
-      const data = await res.json();
-      if (!data[id]) {
-        return {
-          error: `Coin '${id}' not found. Supported examples: bitcoin, ethereum, solana, ripple, avalanche-2, dogecoin.`,
-        };
+      const symbolMap: Record<string, string> = {
+        btc: "bitcoin",
+        eth: "ethereum",
+        sol: "solana",
+        doge: "dogecoin",
+        xrp: "ripple",
+        ada: "cardano",
+      };
+      const cleanId = symbolMap[id] || id;
+
+      // 1. Try CoinGecko with 3s timeout
+      try {
+        const res = await fetch(
+          `https://api.coingecko.com/api/v3/simple/price?ids=${encodeURIComponent(cleanId)}&vs_currencies=usd&include_24hr_change=true`,
+          { signal: AbortSignal.timeout(3000) }
+        );
+        if (res.ok) {
+          const data = await res.json();
+          if (data[cleanId]?.usd !== undefined) {
+            return {
+              coin: cleanId,
+              priceUsd: `$${data[cleanId].usd.toLocaleString()}`,
+              change24h: data[cleanId].usd_24h_change !== undefined ? `${data[cleanId].usd_24h_change.toFixed(2)}%` : "N/A",
+              source: "CoinGecko",
+            };
+          }
+        }
+      } catch {
+        // Fallback on timeout or rate limit
       }
+
+      // 2. High-speed fallback to Coinbase spot price
+      try {
+        const pair =
+          cleanId === "bitcoin" || cleanId === "btc"
+            ? "BTC-USD"
+            : cleanId === "ethereum" || cleanId === "eth"
+            ? "ETH-USD"
+            : cleanId === "solana" || cleanId === "sol"
+            ? "SOL-USD"
+            : null;
+
+        if (pair) {
+          const cbRes = await fetch(`https://api.coinbase.com/v2/prices/${pair}/spot`, {
+            signal: AbortSignal.timeout(2500),
+          });
+          if (cbRes.ok) {
+            const cbData = await cbRes.json();
+            const price = parseFloat(cbData.data?.amount);
+            if (!isNaN(price)) {
+              return {
+                coin: cleanId,
+                priceUsd: `$${price.toLocaleString()}`,
+                change24h: "Live",
+                source: "Coinbase",
+              };
+            }
+          }
+        }
+      } catch {
+        // Fallback failed
+      }
+
       return {
-        coin: id,
-        priceUsd: `$${data[id].usd.toLocaleString()}`,
-        change24h: data[id].usd_24h_change ? `${data[id].usd_24h_change.toFixed(2)}%` : "N/A",
-        source: "CoinGecko API",
+        error: `Could not retrieve live price for '${cleanId}'.`,
       };
     },
   },
@@ -134,17 +185,23 @@ export const tools: Tool[] = [
     },
     run: async ({ topic }) => {
       const cleanTopic = encodeURIComponent(String(topic).trim().replace(/\s+/g, "_"));
-      const res = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${cleanTopic}`);
-      if (!res.ok) {
-        return { error: `No Wikipedia summary found for '${topic}'.` };
+      try {
+        const res = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${cleanTopic}`, {
+          signal: AbortSignal.timeout(3500),
+        });
+        if (!res.ok) {
+          return { error: `No Wikipedia summary found for '${topic}'.` };
+        }
+        const data = await res.json();
+        return {
+          title: data.title,
+          description: data.description,
+          summary: data.extract,
+          pageUrl: data.content_urls?.desktop?.page,
+        };
+      } catch {
+        return { error: `Wikipedia lookup timed out for '${topic}'.` };
       }
-      const data = await res.json();
-      return {
-        title: data.title,
-        description: data.description,
-        summary: data.extract,
-        pageUrl: data.content_urls?.desktop?.page,
-      };
     },
   },
 

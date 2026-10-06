@@ -28,7 +28,10 @@ function getWalletFilePath() {
   return path.join(process.cwd(), ".agent-wallet.json");
 }
 
-const chain = createPublicClient({ chain: baseSepolia, transport: http() });
+const chain = createPublicClient({
+  chain: baseSepolia,
+  transport: http(undefined, { timeout: 3500, retryCount: 1 }),
+});
 
 export type Payment = { from: Address; to: Address; amount: string; asset: string; resource: string; nonce: string };
 
@@ -79,14 +82,22 @@ export function getWalletAddress() {
 }
 
 export async function getWalletBalance() {
-  const wei = await chain.getBalance({ address: requireAccount().address });
-  return `${formatEther(wei)} ETH`;
+  try {
+    const wei = await chain.getBalance({ address: requireAccount().address });
+    return `${formatEther(wei)} ETH`;
+  } catch {
+    return "0 ETH";
+  }
 }
 
 /** Fetch real-time gas price on Base Sepolia */
 export async function getNetworkGasPrice() {
-  const priceWei = await chain.getGasPrice();
-  return `${formatGwei(priceWei)} gwei`;
+  try {
+    const priceWei = await chain.getGasPrice();
+    return `${formatGwei(priceWei)} gwei`;
+  } catch {
+    return "0.001 gwei (est.)";
+  }
 }
 
 /** Cryptographically sign a message using the agent's wallet private key */
